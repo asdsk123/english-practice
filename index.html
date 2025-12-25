@@ -62,44 +62,38 @@
 
 <script>
 const synth = window.speechSynthesis;
-let samVoice = null;
+let samantha = null;
 
-// 強制抓 Samantha（iOS 實測有效）
-function loadSamantha() {
+function getSamantha() {
   const voices = synth.getVoices();
-  if (!voices.length) return null;
-
-  return voices.find(v =>
-    v.name === "Samantha" ||
-    (v.name.includes("Samantha") && v.lang === "en-US")
-  ) || null;
+  return voices.find(v => v.name === "Samantha") || null;
 }
 
 function speak(text) {
-  // iOS 必須在 click 裡面做這些事
   synth.cancel();
 
-  // 強制喚醒 voices（iOS 地雷）
-  if (!samVoice) {
-    samVoice = loadSamantha();
-    console.log("Loaded voice:", samVoice);
+  // 一定要在 click 裡面抓
+  if (!samantha) {
+    samantha = getSamantha();
+    console.log("Using voice:", samantha);
   }
 
   const utter = new SpeechSynthesisUtterance(text);
 
-  if (samVoice) {
-    utter.voice = samVoice;
+  if (samantha) {
+    utter.voice = samantha;
+    // ❗ 不要設 utter.lang
   } else {
-    utter.lang = "en-US"; // fallback
+    // 萬一真的抓不到才 fallback
+    utter.lang = "en-US";
   }
 
   utter.rate = 0.9;
   utter.pitch = 1.0;
-  utter.volume = 1.0;
+  utter.volume = 1;
 
   synth.speak(utter);
 }
-
 
         // ---------------------------------------------------------
         // 以下是您原本的頁面渲染邏輯 (保持不變)
