@@ -670,19 +670,6 @@ function speak(text) {
         ];
 
         // --- 核心邏輯保持不變 ---
-        function loadVoices() {
-            let voices = synth.getVoices();
-            if (voices.length === 0) {
-                synth.onvoiceschanged = () => loadVoices();
-            }
-        }
-
-        function speak(text) {
-            if (synth.speaking) synth.cancel();
-            const utter = new SpeechSynthesisUtterance(text);
-            utter.lang = 'en-US';
-            synth.speak(utter);
-        }
 
         function createRangeButtons(containerId, callback) {
             const container = document.getElementById(containerId);
