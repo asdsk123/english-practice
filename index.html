@@ -60,62 +60,46 @@
         </div>
     </div>
 
-    <script>
-        const synth = window.speechSynthesis;
-        let curQStart = 0, curQEnd = 50;
-        let samVoice = null;
+<script>
+const synth = window.speechSynthesis;
+let samVoice = null;
 
-        // 核心：用最嚴格與最寬鬆的雙重過濾
-        function getSamantha() {
-            const voices = synth.getVoices();
-            if (voices.length === 0) return null;
+// 強制抓 Samantha（iOS 實測有效）
+function loadSamantha() {
+  const voices = synth.getVoices();
+  if (!voices.length) return null;
 
-            // 1. 優先找高品質版本 (Enhanced)
-            let v = voices.find(v => v.name.includes('Samantha') && v.name.includes('Enhanced'));
-            // 2. 找一般版本
-            if (!v) v = voices.find(v => v.name.includes('Samantha'));
-            // 3. 找 iOS 內部 ID 匹配
-            if (!v) v = voices.find(v => v.voiceURI.includes('Samantha'));
-            
-            return v;
-        }
+  return voices.find(v =>
+    v.name === "Samantha" ||
+    (v.name.includes("Samantha") && v.lang === "en-US")
+  ) || null;
+}
 
-        // 初始化與監聽
-        function init() {
-            samVoice = getSamantha();
-            if (samVoice) {
-                console.log("成功鎖定 Samantha: " + samVoice.name);
-            }
-        }
+function speak(text) {
+  // iOS 必須在 click 裡面做這些事
+  synth.cancel();
 
-        // 這是解決 iOS 非同步問題的絕招
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = init;
-        }
+  // 強制喚醒 voices（iOS 地雷）
+  if (!samVoice) {
+    samVoice = loadSamantha();
+    console.log("Loaded voice:", samVoice);
+  }
 
-        function speak(text) {
-            if (synth.speaking) synth.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
 
-            // 如果點擊時還沒抓到，再抓一次
-            if (!samVoice) init();
+  if (samVoice) {
+    utter.voice = samVoice;
+  } else {
+    utter.lang = "en-US"; // fallback
+  }
 
-            const utter = new SpeechSynthesisUtterance(text);
-            
-            if (samVoice) {
-                utter.voice = samVoice;
-            } else {
-                // 強制指定語言，防止變更成中文或其他奇怪聲音
-                utter.lang = 'en-US'; 
-            }
+  utter.rate = 0.9;
+  utter.pitch = 1.0;
+  utter.volume = 1.0;
 
-            utter.pitch = 1.0;
-            utter.rate = 0.9;
-            
-            // iOS 必加：確保音量
-            utter.volume = 1.0;
+  synth.speak(utter);
+}
 
-            synth.speak(utter);
-        }
 
         // ---------------------------------------------------------
         // 以下是您原本的頁面渲染邏輯 (保持不變)
