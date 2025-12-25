@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>英文練習系統</title>
+    <style>
+        body { font-family: 'Arial', sans-serif; margin: 0; padding: 0; background-color: #f9f9f9; color: #333; line-height: 1.6; }
+        .navbar { display: flex; justify-content: space-around; background-color: #16C9B9; color: white; padding: 15px 0; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+        .navbar-item { cursor: pointer; font-size: 18px; font-weight: bold; padding: 5px 10px; border-bottom: 3px solid transparent; transition: border-bottom 0.3s; }
+        .navbar-item.active { border-bottom: 3px solid #ff69b4; }
+        .content { padding: 80px 15px 20px 15px; max-width: 800px; margin: 0 auto; }
+        .page { display: none; }
+        .page.active { display: block; }
+        .range-selector { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 20px; }
+        .range-btn { padding: 8px 12px; background-color: #fff; border: 2px solid #16C9B9; color: #16C9B9; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .range-btn.active { background-color: #16C9B9; color: white; }
+        .word-item { display: flex; justify-content: space-between; align-items: center; background: white; padding: 12px 15px; margin-bottom: 8px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .word-text { flex-grow: 1; font-size: 17px; }
+        .word-chinese { color: #666; margin-left: 0px; font-size: 15px; display: block; margin-top: 5px; border-top: 1px dotted #eee; padding-top: 3px; }
+        .audio-btn { background: #16C9B9; color: white; border: none; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; margin-left: 10px; font-size: 16px; flex-shrink: 0; }
+        .quiz-container { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .question-block { margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #eee; }
+        .question-text { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #16C9B9; }
+        .option-button { display: block; width: 100%; padding: 12px; margin-bottom: 8px; border: 1px solid #ddd; background: white; text-align: left; border-radius: 6px; cursor: pointer; font-size: 15px; }
+        .option-button.selected { background-color: #e0f7f5; border-color: #16C9B9; }
+        .option-button.correct { background-color: #4CAF50 !important; color: white !important; }
+        .option-button.wrong { background-color: #ff69b4 !important; color: white !important; }
+        .submit-btn, .next-quiz-btn { width: 100%; padding: 15px; background-color: #16C9B9; color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="navbar">
+        <div class="navbar-item active" onclick="showPage('wordList', event)">短語列表</div>
+        <div class="navbar-item" onclick="showPage('wordQuiz', event)">英翻中測驗</div>
+        <div class="navbar-item" onclick="showPage('listenQuiz', event)">聽力測驗</div>
+    </div>
+
+    <div id="wordList" class="content page active">
+        <div class="range-selector" id="wordRangeSelector"></div>
+        <div id="wordDisplay"></div>
+    </div>
+
+    <div id="wordQuiz" class="content page">
+        <div class="range-selector" id="quizRangeSelector"></div>
+        <div class="quiz-container">
+            <div id="wordQuizContent"></div>
+            <button id="submitWordQuiz" class="submit-btn">送出答案</button>
+            <button id="nextWordQuiz" class="next-quiz-btn" style="display:none;">下一題</button>
+        </div>
+    </div>
+
+    <div id="listenQuiz" class="content page">
+        <div class="range-selector" id="listenRangeSelector"></div>
+        <div class="quiz-container">
+            <div id="listenQuizContent"></div>
+            <button id="submitListenQuiz" class="submit-btn">送出答案</button>
+            <button id="nextListenQuiz" class="next-quiz-btn" style="display:none;">下一題</button>
+        </div>
+    </div>
+
+    <script>
+        const synth = window.speechSynthesis;
+        let curQStart = 0, curQEnd = 50;
+        let samVoice = null;
+
+        // 核心：用最嚴格與最寬鬆的雙重過濾
+        function getSamantha() {
+            const voices = synth.getVoices();
+            if (voices.length === 0) return null;
+
+            // 1. 優先找高品質版本 (Enhanced)
+            let v = voices.find(v => v.name.includes('Samantha') && v.name.includes('Enhanced'));
+            // 2. 找一般版本
+            if (!v) v = voices.find(v => v.name.includes('Samantha'));
+            // 3. 找 iOS 內部 ID 匹配
+            if (!v) v = voices.find(v => v.voiceURI.includes('Samantha'));
+            
+            return v;
+        }
+
+        // 初始化與監聽
+        function init() {
+            samVoice = getSamantha();
+            if (samVoice) {
+                console.log("成功鎖定 Samantha: " + samVoice.name);
+            }
+        }
+
+        // 這是解決 iOS 非同步問題的絕招
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = init;
+        }
+
+        function speak(text) {
+            if (synth.speaking) synth.cancel();
+
+            // 如果點擊時還沒抓到，再抓一次
+            if (!samVoice) init();
+
+            const utter = new SpeechSynthesisUtterance(text);
+            
+            if (samVoice) {
+                utter.voice = samVoice;
+            } else {
+                // 強制指定語言，防止變更成中文或其他奇怪聲音
+                utter.lang = 'en-US'; 
+            }
+
+            utter.pitch = 1.0;
+            utter.rate = 0.9;
+            
+            // iOS 必加：確保音量
+            utter.volume = 1.0;
+
+            synth.speak(utter);
+        }
+
+        // ---------------------------------------------------------
+        // 以下是您原本的頁面渲染邏輯 (保持不變)
+        // ---------------------------------------------------------
+
+        function createRangeButtons(containerId, callback) {
+            const container = document.getElementById(containerId);
+            if(!container) return;
+            container.innerHTML = '';
+            for (let i = 0; i < wordData.length; i += 50) {
+                let start = i, end = Math.min(i + 50, wordData.length);
+                let btn = document.createElement('button');
+                btn.className = 'range-btn';
+                btn.innerText = `${start + 1}-${end}`;
+                btn.onclick = (e) => {
+                    document.querySelectorAll(`#${containerId} .range-btn`).forEach(b => b.classList.remove('active'));
+                    e.target.classList.add('active');
+                    callback(start, end);
+                };
+                if (i === 0) btn.classList.add('active');
+                container.appendChild(btn);
+            }
+        }
+
+        function renderWordList(start, end) {
+            const display = document.getElementById('wordDisplay');
+            display.innerHTML = '';
+            wordData.slice(start, end).forEach((item, idx) => {
+                let div = document.createElement('div');
+                div.className = 'word-item';
+                div.innerHTML = `
+                    <div class="word-text">
+                        <strong>${start + idx + 1}. ${item.english}</strong>
+                        <span class="word-chinese">${item.chinese}</span>
+                    </div>
+                    <button class="audio-btn" onclick="speak('${item.english.replace(/'/g, "\\'")}')">🔊</button>
+                `;
+                display.appendChild(div);
+            });
+        }
+
+        function renderQuiz(type, start, end) {
+            const containerId = type === 'word' ? 'wordQuizContent' : 'listenQuizContent';
+            const nextBtnId = type === 'word' ? 'nextWordQuiz' : 'nextListenQuiz';
+            const submitBtnId = type === 'word' ? 'submitWordQuiz' : 'submitListenQuiz';
+            document.getElementById(nextBtnId).style.display = 'none';
+            document.getElementById(submitBtnId).style.display = 'block';
+            
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            let pool = wordData.slice(start, end);
+            let questions = [...pool].sort(() => 0.5 - Math.random()).slice(0, 5);
+            
+            questions.forEach((q, i) => {
+                let options = [q.chinese];
+                while(options.length < 4) {
+                    let r = wordData[Math.floor(Math.random()*wordData.length)].chinese;
+                    if(!options.includes(r)) options.push(r);
+                }
+                options.sort(() => 0.5 - Math.random());
+                
+                let qDiv = document.createElement('div');
+                qDiv.className = 'question-block';
+                qDiv.dataset.correct = q.chinese;
+                
+                let qTitle = document.createElement('div');
+                qTitle.className = 'question-text';
+                if(type === 'word') {
+                    qTitle.innerText = `${i+1}. ${q.english}`;
+                } else {
+                    qTitle.innerHTML = `${i+1}. <button class="audio-btn" style="margin:0" onclick="speak('${q.english.replace(/'/g, "\\'")}')">🔊</button>`;
+                }
+                
+                qDiv.appendChild(qTitle);
+                options.forEach(opt => {
+                    let btn = document.createElement('button');
+                    btn.className = 'option-button';
+                    btn.innerText = opt;
+                    btn.onclick = () => {
+                        qDiv.querySelectorAll('.option-button').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                    };
+                    qDiv.appendChild(btn);
+                });
+                container.appendChild(qDiv);
+            });
+        }
+
+        function setupQuizSubmit(btnId, nextBtnId, contentId) {
+            document.getElementById(btnId).onclick = () => {
+                let questions = document.querySelectorAll(`#${contentId} .question-block`);
+                questions.forEach(q => {
+                    let correct = q.dataset.correct;
+                    let selected = q.querySelector('.option-button.selected');
+                    q.querySelectorAll('.option-button').forEach(b => {
+                        if(b.innerText === correct) b.classList.add('correct');
+                        else if(b.classList.contains('selected')) b.classList.add('wrong');
+                    });
+                });
+                document.getElementById(btnId).style.display = 'none';
+                document.getElementById(nextBtnId).style.display = 'block';
+            };
+        }
+
+        function showPage(pageId, event) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+            document.querySelectorAll('.navbar-item').forEach(i => i.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            if (synth.speaking) synth.cancel();
+        }
+
+        window.onload = () => {
+            init(); // 頁面載入先跑一次
+            createRangeButtons('wordRangeSelector', renderWordList);
+            createRangeButtons('quizRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('word',s,e); });
+            createRangeButtons('listenRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('listen',s,e); });
+            renderWordList(0, 50);
+            renderQuiz('word', 0, 50);
+            renderQuiz('listen', 0, 50);
+            setupQuizSubmit('submitWordQuiz', 'nextWordQuiz', 'wordQuizContent');
+            setupQuizSubmit('submitListenQuiz', 'nextListenQuiz', 'listenQuizContent');
+            document.getElementById('nextWordQuiz').onclick = () => renderQuiz('word', curQStart, curQEnd);
+            document.getElementById('nextListenQuiz').onclick = () => renderQuiz('listen', curQStart, curQEnd);
+        };
+
+        // 僅使用您 Excel 檔案提供的內容
+        const wordData = [
+            {english: "abide by the terms", chinese: "遵守條款"},
+            {english: "The applicant must meet all the requirements to be considered for the job opening.", chinese: "申請人必須滿足所有要求，才能被考慮錄取這個職位空缺。"},
+            {english: "ensure a fair agreement", chinese: "確保公平的協議"},
+            {english: "Employees who fail to comply with the dress code may be severely reprimanded regarding their attire.", chinese: "員工若不遵守服裝規定，可能會因其著裝而受到嚴厲斥責。"},
+            {english: "The prospective employer values diligent candidates who demonstrate proficiency in the required skills.", chinese: "潛在雇主重視那些在所需技能上展現熟練度且勤奮的候選人。"},
+            {english: "Under no circumstance should you forge a check, as it is a serious criminal offense.", chinese: "在任何情況下，你都不應該偽造支票，因為這是一項嚴重的刑事犯罪。"},
+            {english: "The hiring manager was impressed by the candidate's outstanding achievements listed on the resume.", chinese: "招聘經理對候選人簡歷上列出的傑出成就印象深刻。"},
+            {english: "The company has an obligation to provide fair compensation to its employees.", chinese: "公司有義務向其員工提供公平的薪酬。"},
+            {english: "Never entrust your money to anyone who might commit fraud.", chinese: "永遠不要將你的錢託付給可能犯下詐欺的人。"},
+            {english: "The new employee will associate with the team to learn about company procedures.", chinese: "新員工將與團隊合作，以了解公司程序。"},
+            {english: "All employees must adhere to the company policies without exception.", chinese: "所有員工都必須無一例外地遵守公司政策。"},
+            {english: "eligible for the position", chinese: "有資格獲得這個職位"},
+            {english: "a higher degree", chinese: "更高學位"},
+            {english: "often endure lower starting wages", chinese: "常常需要忍受較低的起薪"},
+            {english: "an appeal with attractive freight rates", chinese: "極具吸引力的運費"},
+            {english: "Environmental groups launched an appeal to abolish the use of single-use plastics.", chinese: "環保團體發起一項呼籲，要求廢除一次性塑膠的使用。"},
+            {english: "Years of hard work and dedication will entitle you to an eventual promotion.", chinese: "多年的努力和奉獻將使你有資格獲得最終的晉升。"},
+            {english: "provides assurance", chinese: "提供保證"},
+            {english: "the reception desk", chinese: "接待櫃檯"},
+            {english: "sustainable practices", chinese: "永續做法"},
+            {english: "make a referral", chinese: "進行推薦"},
+            {english: "recommend an employee for a promotion", chinese: "推薦一名員工升職"},
+            {english: "approve expenses", chinese: "批准費用"},
+            {english: "temporarily unavailable", chinese: "暫時無法使用"},
+            {english: "individually packaged", chinese: "單獨包裝"},
+            {english: "under construction", chinese: "施工中 建設中"},
+            {english: "in advance", chinese: "提前 事先"},
+            {english: "in charge of", chinese: "負責"},
+            {english: "a press release", chinese: "新聞稿"},
+            {english: "a brief outline", chinese: "簡要的概述"},
+            {english: "a partial refund", chinese: "部分退款"},
+            {english: "marketing strategies", chinese: "行銷策略"},
+            {english: "overnight delivery", chinese: "隔夜送達"},
+            {english: "an excerpt from a workshop", chinese: "工作坊的摘錄"},
+            {english: "the onboarding process", chinese: "入職流程"},
+            {english: "the hiring process", chinese: "招聘流程"},
+            {english: "board of directors", chinese: "董事會"},
+            {english: "a security procedure", chinese: "安全程序"},
+            {english: "an extended warranty", chinese: "延長過的保固期"},
+            {english: "the inclement weather", chinese: "惡劣的天氣"},
+            {english: "a financial incentive", chinese: "財務上的激勵"},
+            {english: "an internship opportunity", chinese: "實習機會"},
+            {english: "the company headquarters", chinese: "公司總部"},
+            {english: "complimentary refreshments", chinese: "免費茶點"},
+            {english: "merger and acquisition(M&A)", chinese: "合併與收購"},
+            {english: "print a brochure", chinese: "印製小冊子"},
+            {english: "work remotely", chinese: "遠距工作"},
+            {english: "address customer concerns", chinese: "處理客戶疑慮"},
+            {english: "give an orientation", chinese: "辦新生 新員工導覽會"},
+            {english: "reschedule a meeting", chinese: "重新安排會議時間"},
+            {english: "provide insurance for employees", chinese: "為員工提供保險"},
+            {english: "refer to the instruction manual", chinese: "參考使用說明手冊"},
+            {english: "boost employee morale", chinese: "提高員工士氣"},
+            {english: "remodel our facilities", chinese: "改造我們的設施"},
+            {english: "prohibit visitors from taking pictures", chinese: "禁止遊客拍照"},
+            {english: "verify the figures", chinese: "驗證數字"},
+            {english: "accommodate 500 guests", chinese: "可容納500位客人"},
+            {english: "recruit community volunteers", chinese: "招募社區志工"},
+            {english: "resolve customer complaints", chinese: "解決客戶投訴"},
+            {english: "adhere to the company’s policies", chinese: "遵守公司的策略"},
+            {english: "on the rack", chinese: "在架子上"},
+            {english: "in a row", chinese: "接連 連續"},
+            {english: "at the intersection", chinese: "在十字路口"},
+            {english: "without written consent", chinese: "未經書面同意"},
+            {english: "unavailable in print", chinese: "無法取得印製品"},
+            {english: "willing to work overtime", chinese: "願意加班"},
+            {english: "aware of the change", chinese: "注意到改變"},
+            {english: "qualified for the position", chinese: "能勝任該職位的"},
+            {english: "consistent with government regulations", chinese: "與政府規定一致"},
+            {english: "a deactivated credit card", chinese: "信用卡被停用"},
+            {english: "reactivate the account", chinese: "重啟帳戶"},
+            {english: "front row seat", chinese: "第一排"},
+            {english: "favorite athlete", chinese: "最喜歡的球員"},
+            {english: "choking", chinese: "(關鍵時刻) 怯場"},
+            {english: "despite months", chinese: "不管幾個月"},
+            {english: "when it matters most", chinese: "當最重要的時候"},
+            {english: "under intense pressure", chinese: "在強度壓力之下"},
+            {english: "intuitively blame", chinese: "直覺地怪罪"},
+            {english: "why does being nervous undermine expert perfomance?", chinese: "為什麼緊張會影響專家的表現呢？"},
+            {english: "two sets of theories", chinese: "有兩種學說"},
+            {english: "which both say that primarily", chinese: "兩者皆說主要是"},
+            {english: "some sailboats are tied to the dock.", chinese: "幾支帆船被綁在碼頭"},
+            {english: "A man is examining a document.", chinese: "男子正在檢視文件"},
+            {english: "a ceiling lamp is being installed.", chinese: "吸頂燈正在安裝"},
+            {english: "the woman is kneeling on the sand.", chinese: "女子跪在沙灘上"},
+            {english: "the man is standing beside a conveyor belt.", chinese: "男子站在輸送帶旁"},
+            {english: "some potted plants are being displayed.", chinese: "一些植物被展示"},
+            {english: "The woman is pointing to a map on the bulletin board", chinese: "女子正指著布告欄上的地圖"},
+            {english: "Piles of boxes are stacked in a room.", chinese: "數堆箱子蝶堆在一個房間裡"},
+            {english: "All of the treadmills are being used.", chinese: "所有的跑步機都有人用"},
+            {english: "The woman is pressing some buttons on the register", chinese: "女子正在按收銀機上的按鈕"},
+            {english: "Structures have been built at the edge of a field.", chinese: "有幾棟建築物建在田野邊"},
+            {english: "Merchandise is displayed on the shelves.", chinese: "貨物在貨架上展示"},
+            {english: "Some children are climbing a staircase.", chinese: "幾個孩子正在爬樓梯"},
+            {english: "He's reaching into his bag.", chinese: "他正伸手進包包"},
+            {english: "Various objects have been placed in a cupboard.", chinese: "各式各樣的物品擺放在櫥櫃裡"},
+            {english: "All of the women are wearing headphones.", chinese: "所有的女子都有戴耳機"},
+            {english: "The people are strolling along theshore.", chinese: "這些人正沿著海岸散步"},
+            {english: "The girl is leaning on a railing.", chinese: "女孩正依靠著欄杆"},
+            {english: "Equipment is resting on a platform.", chinese: "器材擺放在平台上"},
+            {english: "The man and the woman are sitting opposite each other.", chinese: "男子和女子面對面坐著"},
+            {english: "A map is laid out on the table.", chinese: "地圖攤放在桌上"},
+            {english: "some people are working at their laptops.", chinese: "幾個人正在筆電上工作"},
+            {english: "A worker is trimming some bushes.", chinese: "工人正在修剪灌木"},
+            {english: "One of them is using a garden tool.", chinese: "其中一人正在使用園藝工具"},
+            {english: "A woman is mowing the lawn.", chinese: "女子正在修剪草坪"},
+            {english: "Cars are parked in a row.", chinese: "車子停成一整排"},
+            {english: "Some lamp posts line the street", chinese: "沿街有一排路燈"},
+            {english: "The girl is running on the path.", chinese: "女孩在小路上跑步"},
+            {english: "They are examning some pipes.", chinese: "他們在檢視一些管線"},
+            {english: "Some merchandise has been placed against the wall.", chinese: "一些貨物靠牆擺放"},
+            {english: "Some ropes are hanging from a ladder.", chinese: "幾根繩子掛在梯子上"},
+            {english: "Some musicians are performing for the crowd.", chinese: "幾個音樂家在為群眾演出"},
+            {english: "A man is paying a cashier.", chinese: "男子正在付錢給收銀員"},
+            {english: "Dishes are being washed in a sink.", chinese: "盤子正在水槽中被人洗"},
+            {english: "Sign below to indicate your acceptance of these terms.", chinese: "在下面簽名已表明您接受這些條款"},
+            {english: "Employees will be seated in the third row of the auditorium.", chinese: "員工將坐在禮堂的第三排"},
+            {english: "You will need to get an identification badge to enter this building.", chinese: "您需要獲得身分識別卡才能進入該建築"},
+            {english: "Until the telephone system is repaired, callers may experience delays of ten minutes or longer.", chinese: "在電話系統修復之前，來電者可能會遇到十分鐘或更長時間的延遲。"},
+            {english: "The cartridge should snap securely into place.", chinese: "碳粉夾應牢固地卡入到位"},
+            {english: "I hope the council will seriously consider this project.", chinese: "希望市議會認真考慮這個項目"},
+            {english: "given to the courier", chinese: "交給快遞員"},
+            {english: "The use of high-quality yet inexpensive machine parts led to a decrease in costs.", chinese: "使用高品質價格低廉的機器零件降低了成本"},
+            {english: "The projector cannot properly display images from certain distances.", chinese: "投影機無法在特定距離正確顯示圖像"},
+            {english: "And above all: Do not tear up the farmer’s fields or roads.", chinese: "最重要的是：不要破壞農民的田地或道路。"},
+            {english: "We have some billing errors.", chinese: "我們遇到了一些計費錯誤"},
+            {english: "for the work invoice.", chinese: "工作發票"},
+            {english: "please stop by my office", chinese: "請到我的辦公室"},
+            {english: "to sign up for a session.", chinese: "來報名參加課程"},
+            {english: "a new company procedure", chinese: "新的公司程序"},
+            {english: "turn in outstanding paperwork", chinese: "上交未完成的文書工作"},
+            {english: "the main conveyor belt is temporarily out of order.", chinese: "主傳送帶暫時出現故障"},
+            {english: "In the meantime", chinese: "同時"},
+            {english: "special assignments.", chinese: "特殊任務"},
+            {english: "inspection results", chinese: "檢驗結果"},
+            {english: "just came on the market", chinese: "剛剛上市"},
+            {english: "we haven't advertised yet", chinese: "我們還沒做廣告"},
+            {english: "the rent is higher than your initial range", chinese: "租金比你最先的範圍高"},
+            {english: "If you foresee expanding your business", chinese: "如果你遇見到要況展你的業務"},
+            {english: "to advertise the property", chinese: "為房地產做廣告"},
+            {english: "An architect", chinese: "建築師"},
+            {english: "A contractor", chinese: "承包商"},
+            {english: "A real estate agent", chinese: "房地產經紀人"},
+            {english: "return the call promptly", chinese: "及時回電"},
+            {english: "submit a deposit", chinese: "提交訂金"},
+            {english: "provide a reference", chinese: "提供參考"},
+            {english: "install a new front windshield", chinese: "安裝新的擋風玻璃"},
+            {english: "file a claim", chinese: "提出理賠"},
+            {english: "spare sticky label", chinese: "標籤貼"},
+            {english: "looking into", chinese: "調查"},
+            {english: "grievance", chinese: "抱怨 委屈"},
+            {english: "downturn", chinese: "衰退 下降"},
+            {english: "indication", chinese: "表示 跡象"},
+            {english: "Snow addresses customer needs in a professional manner.", chinese: "雪薇以專業的態度回應顧客需求"},
+            {english: "investment in the tourism industry", chinese: "對旅遊業的投資"},
+            {english: "the research team of a bio-tech company", chinese: "生技公司的研究團隊"},
+            {english: "designed to relieve pain in the joints and back", chinese: "設計來減輕關節與背部的疼痛"},
+            {english: "prompt feedback", chinese: "立即的回覆"},
+            {english: "submit all of the requested documents", chinese: "繳交所有要求的文件"},
+            {english: "The head of the finance department is on vacation.", chinese: "財務部主任現在正在休假"},
+            {english: "place an order online", chinese: "在網路上下單"},
+            {english: "a noticeable difference", chinese: "明顯的差異"},
+            {english: "employees working on weekends", chinese: "周末上班的員工"},
+            {english: "trip to Venice has to be canceled unexpectedly", chinese: "前往威尼斯的旅行必須無預警取消"},
+            {english: "parking fines", chinese: "違規停車罰款"},
+            {english: "Consumer spending is on the rise.", chinese: "消費者支出日益上升"},
+            {english: "schedule a fundraising event", chinese: "策畫募款活動的時程"},
+            {english: "a recent survey", chinese: "最近的調查"},
+            {english: "a keynote speaker", chinese: "主題講者"},
+            {english: "earn a bonus", chinese: "徵得獎金"},
+            {english: "tickets must be purchased one month in advance", chinese: "票必須提前一個月購買"},
+            {english: "perfect attendance and timekeeping", chinese: "完美的出勤和守時"},
+            {english: "minimun requirements for the position", chinese: "這個職位的最低要求條件"},
+            {english: "We would like to invite you to interview with us.", chinese: "我們想邀請您來和我們面談"},
+            {english: "shipping rates", chinese: "運費費率"},
+            {english: "urgent questions", chinese: "急迫的問題"},
+            {english: "I'm so pleased that you got promoted to production line manager.", chinese: "我非常高興你生為產線經理"},
+            {english: "offer discounts on season tickets", chinese: "提供折扣給季票"},
+            {english: "our main office", chinese: "我們的總部"},
+            {english: "I've accepted the job over the phone, but I haven't confirmed in writing yet.", chinese: "我已透過電話接受了這份工作，但尚未書面確認"},
+            {english: "the head of the personnel department", chinese: "人資部門主任"},
+            {english: "noise regulations", chinese: "噪音管制規則"},
+            {english: "the bakery's popularity", chinese: "這間麵包店的人氣"},
+            {english: "Please sign at the bottom of the form.", chinese: "請在表單最下方簽名"},
+            {english: "an immediate response", chinese: "立即的回覆"},
+            {english: "assist your team member with the preparations", chinese: "協助你的團隊成員進行準備工作"},
+            {english: "open a new branch downtown", chinese: "開一間位於市區的新分店"},
+            {english: "a quarterly magazine", chinese: "季刊"},
+            {english: "a valuable new member of the team", chinese: "團隊的一位寶貴的新成員"},
+            {english: "lack experience in the field of e-commerce", chinese: "在電商領域缺乏經驗"},
+            {english: "The receptionist is working in the conference room.", chinese: "櫃台人員正在會議室裡工作"},
+            {english: "overseas orders", chinese: "海外訂單"},
+            {english: "full details about the position", chinese: "這個職位的完整細節"},
+            {english: "The stadium will be open to the public soon.", chinese: "體育場將很快對公眾開放"},
+            {english: "competitive prices", chinese: "具競爭力的價格"},
+            {english: "search for some change", chinese: "找出些零錢"},
+            {english: "a recent article on consumer trends", chinese: "一篇關於消費者趨勢的近期文章"},
+            {english: "an amusement park", chinese: "遊樂園"},
+            {english: "local businesses", chinese: "本地商家"},
+            {english: "the recruitment page on our website", chinese: "我們網站上的員工招募頁面"},
+            {english: "a soft opening for friends and family", chinese: "給朋友和家人的試營運"},
+            {english: "apply for the fashion designer position", chinese: "申請時裝設計師的職位"},
+            {english: "on the market", chinese: "市面上"},
+            {english: "make a refund request", chinese: "做出退款請求"},
+            {english: "annual reviews", chinese: "年度回顧"},
+            {english: "arrive at the airport", chinese: "抵達機場"},
+            {english: "attend a workshop", chinese: "出席工作坊"},
+            {english: "handle a disappointed client", chinese: "處理失望的客戶"},
+            {english: "staff in the customer service department", chinese: "客服部的員工"},
+            {english: "a full time job", chinese: "全職工作"},
+            {english: "local community", chinese: "當地的社區"},
+            {english: "a medical appointment", chinese: "看診預約"},
+            {english: "participate in the discussion", chinese: "參與討論"},
+            {english: "marketing director", chinese: "行銷主任"},
+            {english: "a qualified college professor", chinese: "合格的大學教授"},
+            {english: "final cost for the project", chinese: "專案最終的花費"},
+            {english: "The products are likely to be successful upon release.", chinese: "產品有可能一上市就非常成功"},
+            {english: "weekend business hours", chinese: "周末的營業時間"},
+            {english: "ensure passenger comfort", chinese: "確保乘客舒適"},
+            {english: "a unique chance", chinese: "獨特的機會"},
+            {english: "The sunglasses you want are not available now", chinese: "您想要的太陽眼鏡現在無法供應"},
+            {english: "payment method", chinese: "付款方式"},
+            {english: "make changes to company policies", chinese: "對公司政策做出調整改變"},
+            {english: "deliver a package", chinese: "遞送包裹"},
+            {english: "a university campus", chinese: "大學校園"},
+            {english: "heavy snow delayed the departure time", chinese: "大雪使出發時間延後"},
+            {english: "print out the handouts", chinese: "印出講義"},
+            {english: "cut down on waiting times", chinese: "減少等候時間"},
+            {english: "We'll inform you when a decision has been reached.", chinese: "決定好之後將會通知您"},
+            {english: "the box office", chinese: "售票處"},
+            {english: "respond promptly to customer complaints", chinese: "對顧客抱怨做出立即的回應"},
+            {english: "a correction to the ariticle", chinese: "文章修訂"},
+            {english: "sales performance", chinese: "銷售表現"},
+            {english: "Please gather at the hotel lobby at 7:00", chinese: "請於7點在飯店大廳集合"},
+            {english: "cost-effective ways to recycle waste paper", chinese: "具成本效益的廢紙回收方式"},
+            {english: "log out of your work e-mail accounts", chinese: "登出您的工作電子郵件帳戶"},
+            {english: "a non-smoking section", chinese: "禁菸區"},
+            {english: "upgrade the equipment", chinese: "升級設備"},
+            {english: "fill out the application form", chinese: "填寫申請表"},
+            {english: "a human resources manager", chinese: "人力資源部經理"},
+            {english: "Holland promised the happiness and welfare of all company employees.", chinese: "蘭皓承諾所有公司員工的幸福及福利"},
+            {english: "utility bill", chinese: "水電帳單"},
+            {english: "power outage", chinese: "停電"},
+            {english: "water supply", chinese: "供水系統"},
+            {english: "maintenance request", chinese: "維修申請"},
+            {english: "facility management", chinese: "設施管理"},
+            {english: "conduct repairs", chinese: "進行維修"},
+            {english: "safety inspection", chinese: "安全檢查"},
+            {english: "energy consumption", chinese: "能源消耗"},
+            {english: "emergency maintenance", chinese: "緊急維修"},
+            {english: "building management office", chinese: "大樓管理處"},
+            {english: "file an insurance claim", chinese: "提出保險理賠"},
+            {english: "coverage details", chinese: "保障內容"},
+            {english: "renew the policy", chinese: "續保"},
+            {english: "assess the damage", chinese: "評估損害"},
+            {english: "insurance premium", chinese: "保費"},
+            {english: "liability issue", chinese: "責任問題"},
+            {english: "submit documentation", chinese: "提交文件"},
+            {english: "request compensation", chinese: "要求賠償"},
+            {english: "evaluate the risk", chinese: "評估風險"},
+            {english: "accident report", chinese: "事故報告"},
+            {english: "make a booking", chinese: "預訂房間"},
+            {english: "room availability", chinese: "房況"},
+            {english: "housekeeping service", chinese: "房務服務"},
+            {english: "complimentary breakfast", chinese: "免費早餐"},
+            {english: "request extra towels", chinese: "索取額外毛巾"},
+            {english: "front desk assistance", chinese: "櫃檯協助"},
+            {english: "room maintenance", chinese: "房間維修"},
+            {english: "fully booked", chinese: "客滿"},
+            {english: "guest satisfaction", chinese: "住客滿意度"},
+            {english: "check-out procedure", chinese: "退房流程"},
+            {english: "a comprehensive guidebook", chinese: "一本全面詳盡的指南"},
+            {english: "a completion certificate", chinese: "完課 完訓證明"},
+            {english: "a product demonstration", chinese: "產品演示"},
+            {english: "a potted plant", chinese: "一盆植物"},
+            {english: "a slide presentation", chinese: "投影片簡報"},
+            {english: "a delivery driver", chinese: "送貨司機"},
+            {english: "a registration form", chinese: "註冊表、報名表"},
+            {english: "a refund policy", chinese: "退款政策"},
+            {english: "a manufacturing facility", chinese: "生產設施"},
+            {english: "a hiking trail", chinese: "健行步道"},
+            {english: "a cost estimate", chinese: "成本估算"},
+            {english: "a book singing event", chinese: "簽書活動"},
+            {english: "a parking permit", chinese: "停車許可證"},
+            {english: "an accounting firm", chinese: "會計公司"},
+            {english: "an expense report", chinese: "費用報告"},
+            {english: "an auto repair shop", chinese: "汽車修理廠"},
+            {english: "an industry expert", chinese: "產品專業人士"},
+            {english: "an inventory list", chinese: "庫存清單"},
+            {english: "the initial report", chinese: "首份報告"},
+            {english: "the reception desk", chinese: "接待櫃檯"},
+            {english: "online presence", chinese: "網路上的能見度"},
+            {english: "seat availability", chinese: "座位供應情況"},
+            {english: "quality merchandise", chinese: "優質商品"},
+            {english: "occupancy rate", chinese: "入住率"},
+            {english: "sustainable practices", chinese: "永續做法"},
+            {english: "attend a conference", chinese: "出席會議"},
+            {english: "make a referral", chinese: "進行推薦"},
+            {english: "negotiate the details of the contract", chinese: "協商合約細節"},
+            {english: "postpone an event", chinese: "把活動延期"},
+            {english: "transfer the fees to my bank account", chinese: "將費用轉入我的銀行帳戶"},
+            {english: "renovate the hotel", chinese: "裝修飯店"},
+            {english: "recommend an employee for a promotion", chinese: "推薦一名員工升職"},
+            {english: "approve expenses", chinese: "批准費用"},
+            {english: "hold some auditions", chinese: "舉行一些試鏡"},
+            {english: "replace the old desks", chinese: "更換舊辦公桌"},
+            {english: "be securely attached to the wall", chinese: "被安全地固定在牆上"},
+            {english: "be recognized for her work", chinese: "因他的工作而受到表彰"},
+            {english: "bulk order", chinese: "大量訂購"},
+            {english: "delivery fee", chinese: "運費"},
+            {english: "always punctual", chinese: "總是很守時"},
+            {english: "he'll be on paternity leave", chinese: "他會休陪產假"},
+            {english: "entering data into a spreadsheet", chinese: "正在試算表輸入資料"},
+            {english: "drawing a chart", chinese: "繪製圖表"},
+            {english: "She applied to be a contributor.", chinese: "他申請成為一名投稿人"},
+            {english: "earlier than usual", chinese: "比平常要早"},
+            {english: "the scanned copy of the contract", chinese: "合約的掃描檔"},
+            {english: "unpaid leave", chinese: "無薪假"},
+            {english: "a video advertisement", chinese: "影片廣告"},
+            {english: "We apologize for the inconvenience this may cause.", chinese: "對於可能造成的不便，敬請見諒"},
+            {english: "Can you explain your question in a more specific way?", chinese: "可以請您更具體的解釋您的問題嗎"},
+            {english: "a big furniture warehouse", chinese: "很大的家具倉庫"},
+            {english: "travel abroad", chinese: "出國旅遊"},
+            {english: "a live broadcast", chinese: "現場轉播"},
+            {english: "share insights on environmental issues", chinese: "分享關於環境議題的一些見解"},
+            {english: "hotel management", chinese: "飯店管理"},
+            {english: "Bad weather is likely to continue for a couple of days.", chinese: "壞天氣很有可能會持續數天"},
+            {english: "raise money for the charity", chinese: "替慈善機構募款"},
+            {english: "road closures", chinese: "道路封閉"},
+            {english: "an effort to target younger generations", chinese: "為瞄準年輕世代所做的努力"},
+            {english: "film awards winners", chinese: "電影獎得主"},
+            {english: "a fitness center", chinese: "健身中心"},
+            {english: "prices have risen by an average of two percent over the past month.", chinese: "過去一個月，物價平均上漲了2%"},
+            {english: "a short summary of this article", chinese: "這篇文章的簡短摘要"},
+            {english: "environmental protection", chinese: "環境保護"},
+            {english: "save money by using volunteers", chinese: "用請志工的方法來省錢"},
+            {english: "a variety of dishes", chinese: "多樣化的菜色"},
+            {english: "miss the deadline for applications", chinese: "錯過申請截止期限"},
+            {english: "deliver a speech", chinese: "發表演說"},
+            {english: "creat a company newsletter", chinese: "創建公司的電子報"},
+            {english: "wood flooring", chinese: "木頭地板"},
+            {english: "check on the status of your applications", chinese: "確認您的申請狀態"},
+            {english: "a sales representative", chinese: "銷售代表"},
+            {english: "professional development", chinese: "專業發展"},
+            {english: "training session", chinese: "培訓課程"},
+            {english: "skill enhancement", chinese: "技能提升"},
+            {english: "learning objectives", chinese: "學習目標"},
+            {english: "training materials", chinese: "培訓教材"},
+            {english: "hands-on experience", chinese: "實務經驗"},
+            {english: "performance improvement", chinese: "績效改善"},
+            {english: "onboarding program", chinese: "新人培訓計畫"},
+            {english: "evaluate effectiveness", chinese: "評估成效"},
+            {english: "continuous learning", chinese: "持續學習"},
+            {english: "fall victim to a scam", chinese: "成為詐騙受害者"},
+            {english: "fraudulent transaction", chinese: "詐騙交易"},
+            {english: "report the fraud", chinese: "通報詐騙"},
+            {english: "unauthorized charge", chinese: "未經授權的扣款"},
+            {english: "identity theft", chinese: "身分盜用"},
+            {english: "phishing attempt", chinese: "釣魚詐騙行為"},
+            {english: "verify the source", chinese: "查證來源"},
+            {english: "freeze the account", chinese: "凍結帳戶"},
+            {english: "financial loss", chinese: "財務損失"},
+            {english: "scam prevention measures", chinese: "防詐騙措施"},
+            {english: "commensurate with your skills", chinese: "與你的技能相稱"},
+            {english: "Given the service I've had so far", chinese: "就我目前為止所受到的服務"},
+            {english: "the presentation won't make much of an impression", chinese: "展示不會給人留下太多印象"},
+            {english: "without a protype", chinese: "沒有原型"},
+            {english: "for you to fly out here", chinese: "你飛來這裡"},
+            {english: "with the backup model", chinese: "帶著備用模型"},
+            {english: "we've been working hard", chinese: "我們一直在努力爭取"},
+            {english: "to fill several managerial positions there", chinese: "填補那裏的幾個管理職位"},
+            {english: "by the beginning of summer", chinese: "在夏初之前"},
+            {english: "So far, we haven't received", chinese: "至今我們還沒有收到"},
+            {english: "any applications from qualified candidates", chinese: "合適候選人的任何申請"},
+            {english: "the deadline to submit was May 15", chinese: "提交的截止日是5月15日"},
+            {english: "since several current employees have applied", chinese: "由於有幾名現任員工提出申請"},
+            {english: "be on the lookout", chinese: "留意"},
+            {english: "I'll email you shortly", chinese: "我會盡快寄電子郵件給你"},
+            {english: "She must move forward with a task", chinese: "他必須完成一項任務"},
+            {english: "Airfares will increase", chinese: "機票將會漲價"},
+            {english: "supervising the building restoration", chinese: "監督建築修復工作"},
+            {english: "The airport has earned $1.6 billion in revenue.", chinese: "機場賺得了16億的收益"},
+            {english: "Volunteers should report to the venue at noon.", chinese: "志工須在中午前抵達會場"},
+            {english: "When does the discount expire?", chinese: "折價什麼時候結束?"},
+            {english: "expressed interest in the position", chinese: "對於職位表示興趣"},
+            {english: "Your prescription will be ready for you to pick up after 2 P.M.", chinese: "你的處方簽可以下午兩點過後來拿"},
+            {english: "a commuter bike", chinese: "通勤腳踏車"},
+            {english: "specifically for commuting through the city", chinese: "專為城市通勤設計"},
+            {english: "water park", chinese: "水上樂園"},
+            {english: "I wanted to help get you oriented.", chinese: "我先跟您說明一下"},
+            {english: "You can store your clothes and personal belongings there.", chinese: "您可以把衣服和個人物品寄放在那邊"},
+            {english: "currently undergoing some renovations.", chinese: "正在整修"},
+            {english: "not fully accessible", chinese: "不完全開放"},
+            {english: "a park greeter", chinese: "園區迎賓人員"},
+            {english: "People are climbing some stairs.", chinese: "人們在爬樓梯"},
+            {english: "People are seated in a circle.", chinese: "人們坐成一個圓圈"},
+            {english: "a bookshelf is being assembled.", chinese: "書架正在組裝中。"},
+            {english: "a floor is being swept with a broom", chinese: "有人正在用掃帚清掃地板。"},
+            {english: "one of the men is gesturing towards an audience", chinese: "其中一人正向觀眾做手勢。"},
+            {english: "a group of people are facing each other", chinese: "一群人面對面站著。"},
+            {english: "they are distributing some documents", chinese: "他們正在分發一些文件。"},
+            {english: "a winter ski vacation", chinese: "冬季滑雪假期"},
+            {english: "who left the laptop in the break room?", chinese: "誰把筆記型電腦落在休息室了？"},
+            {english: "I'll keep working", chinese: "我會繼續工作。"},
+            {english: "It departs in half an hour.", chinese: "半小時後起飛。"},
+            {english: "at baggage carousel 3.", chinese: "在3號行李轉盤處。"},
+            {english: "When will the vice president returen form the board meeting?", chinese: "副總裁什麼時候從董事會回來？"},
+            {english: "check with his assistant", chinese: "請諮詢他的助理。"},
+            {english: "Why can't I use the parking lot?", chinese: "為什麼我不能使用停車場？"},
+            {english: "except for holidays.", chinese: "假日除外。"},
+            {english: "it is now being repaved", chinese: "停車場正在重鋪路面。"},
+            {english: "Are you free to cover my shift on Friday?", chinese: "你周五有空替我值班嗎？"},
+            {english: "I'll be out of town", chinese: "我要出差。"},
+            {english: "the daily specials, please", chinese: "請給我每日特價菜。"},
+            {english: "I like its modern look.", chinese: "我喜歡它現代的風格。"},
+            {english: "The light in the corridor", chinese: "走廊上的燈光。"},
+            {english: "an expert in the field?", chinese: "您是這方面的專家嗎？"},
+            {english: "When will our banners be ready to pick up?", chinese: "我們的橫幅什麼時候可以取？"},
+            {english: "call the print shop", chinese: "請致電印刷廠。"},
+            {english: "at the appliance store in the mall", chinese: "在商場的電器商店"},
+            {english: "That's shame", chinese: "真可惜"},
+            {english: "It hasn't been released yet", chinese: "還沒上市呢"},
+            {english: "the business loan application", chinese: "商業貸款申請"},
+            {english: "run a small catering business", chinese: "經營一家小型餐飲企業"},
+            {english: "She would be a great asset to us.", chinese: "她對我們來說將是一筆寶貴的財富。"},
+            {english: "Who is organizing the carpool for the staff retreat?", chinese: "誰負責組織員工靜修的共乘事宜？"},
+            {english: "I hope we go to a resort", chinese: "我希望我們能去度假村。"},
+            {english: "I feel like I learned a lot.", chinese: "我覺得我學到了很多。"},
+            {english: "take a seat anywhere", chinese: "隨便找個地方坐下。"},
+            {english: "What kinds of lawnmowers does your business sell?", chinese: "你們公司賣哪些類型的割草機？"},
+            {english: "We only rent out our machines", chinese: "我們只租機器。"},
+            {english: "at the back of the stall", chinese: "在攤位後面"},
+            {english: "How did the inspection of the production floor go?", chinese: "生產車間的檢查進行得怎麼樣？"},
+            {english: "I haven't seen the results.", chinese: "我還沒看到結果。"},
+            {english: "the final draft", chinese: "最終草稿"},
+            {english: "before it got sent for publication", chinese: "在送去發表之前。"},
+            {english: "You can find one in the best seller section", chinese: "你可以在暢銷商品區找到它。"},
+            {english: "the address is clearly labeled", chinese: "地址已明確標註。"},
+            {english: "No, the last day of the month", chinese: "不，是當月的最後一天"},
+            {english: "complement each other very well", chinese: "互補的很好"},
+            {english: "That's very kind of you", chinese: "謝謝您的好意"},
+            {english: "Why don't you include our landlord on the guest list?", chinese: "為什麼不把我們的房東也列入賓客名單呢？"},
+            {english: "I had trouble finding the entrance.", chinese: "我找入口費了好大勁。"},
+            {english: "Please RSVP to my secretary", chinese: "請回覆我的秘書。"},
+            {english: "He's already been added", chinese: "他已被添加"}
+        ];
+
+        // --- 核心邏輯保持不變 ---
+        function loadVoices() {
+            let voices = synth.getVoices();
+            if (voices.length === 0) {
+                synth.onvoiceschanged = () => loadVoices();
+            }
+        }
+
+        function speak(text) {
+            if (synth.speaking) synth.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'en-US';
+            synth.speak(utter);
+        }
+
+        function createRangeButtons(containerId, callback) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            for (let i = 0; i < wordData.length; i += 50) {
+                let start = i, end = Math.min(i + 50, wordData.length);
+                let btn = document.createElement('button');
+                btn.className = 'range-btn';
+                btn.innerText = `${start + 1}-${end}`;
+                btn.onclick = (e) => {
+                    document.querySelectorAll(`#${containerId} .range-btn`).forEach(b => b.classList.remove('active'));
+                    e.target.classList.add('active');
+                    callback(start, end);
+                };
+                if (i === 0) btn.classList.add('active');
+                container.appendChild(btn);
+            }
+        }
+
+        function renderWordList(start, end) {
+            const display = document.getElementById('wordDisplay');
+            display.innerHTML = '';
+            wordData.slice(start, end).forEach((item, idx) => {
+                let div = document.createElement('div');
+                div.className = 'word-item';
+                div.innerHTML = `
+                    <div class="word-text">
+                        <strong>${start + idx + 1}. ${item.english}</strong>
+                        <span class="word-chinese">${item.chinese}</span>
+                    </div>
+                    <button class="audio-btn" onclick="speak('${item.english.replace(/'/g, "\\'")}')">🔊</button>
+                `;
+                display.appendChild(div);
+            });
+        }
+
+        function renderQuiz(type, start, end) {
+            const containerId = type === 'word' ? 'wordQuizContent' : 'listenQuizContent';
+            const nextBtnId = type === 'word' ? 'nextWordQuiz' : 'nextListenQuiz';
+            const submitBtnId = type === 'word' ? 'submitWordQuiz' : 'submitListenQuiz';
+            document.getElementById(nextBtnId).style.display = 'none';
+            document.getElementById(submitBtnId).style.display = 'block';
+            
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            let pool = wordData.slice(start, end);
+            let questions = [...pool].sort(() => 0.5 - Math.random()).slice(0, 5);
+            
+            questions.forEach((q, i) => {
+                let options = [q.chinese];
+                while(options.length < 4) {
+                    let r = wordData[Math.floor(Math.random()*wordData.length)].chinese;
+                    if(!options.includes(r)) options.push(r);
+                }
+                options.sort(() => 0.5 - Math.random());
+                
+                let qDiv = document.createElement('div');
+                qDiv.className = 'question-block';
+                qDiv.dataset.correct = q.chinese;
+                
+                let qTitle = document.createElement('div');
+                qTitle.className = 'question-text';
+                if(type === 'word') {
+                    qTitle.innerText = `${i+1}. ${q.english}`;
+                } else {
+                    qTitle.innerHTML = `${i+1}. <button class="audio-btn" style="margin:0" onclick="speak('${q.english.replace(/'/g, "\\'")}')">🔊</button>`;
+                }
+                
+                qDiv.appendChild(qTitle);
+                options.forEach(opt => {
+                    let btn = document.createElement('button');
+                    btn.className = 'option-button';
+                    btn.innerText = opt;
+                    btn.onclick = () => {
+                        qDiv.querySelectorAll('.option-button').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                    };
+                    qDiv.appendChild(btn);
+                });
+                container.appendChild(qDiv);
+            });
+        }
+
+        function setupQuizSubmit(btnId, nextBtnId, contentId) {
+            document.getElementById(btnId).onclick = () => {
+                let questions = document.querySelectorAll(`#${contentId} .question-block`);
+                questions.forEach(q => {
+                    let correct = q.dataset.correct;
+                    let selected = q.querySelector('.option-button.selected');
+                    q.querySelectorAll('.option-button').forEach(b => {
+                        if(b.innerText === correct) b.classList.add('correct');
+                        else if(b.classList.contains('selected')) b.classList.add('wrong');
+                    });
+                });
+                document.getElementById(btnId).style.display = 'none';
+                document.getElementById(nextBtnId).style.display = 'block';
+            };
+        }
+
+        function showPage(pageId, event) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+            document.querySelectorAll('.navbar-item').forEach(i => i.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            if (synth.speaking) synth.cancel();
+        }
+
+        window.onload = () => {
+            loadVoices();
+            createRangeButtons('wordRangeSelector', renderWordList);
+            createRangeButtons('quizRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('word',s,e); });
+            createRangeButtons('listenRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('listen',s,e); });
+            renderWordList(0, 50);
+            renderQuiz('word', 0, 50);
+            renderQuiz('listen', 0, 50);
+            setupQuizSubmit('submitWordQuiz', 'nextWordQuiz', 'wordQuizContent');
+            setupQuizSubmit('submitListenQuiz', 'nextListenQuiz', 'listenQuizContent');
+            document.getElementById('nextWordQuiz').onclick = () => renderQuiz('word', curQStart, curQEnd);
+            document.getElementById('nextListenQuiz').onclick = () => renderQuiz('listen', curQStart, curQEnd);
+        };
+    </script>
+</body>
+</html>
