@@ -61,188 +61,45 @@
     </div>
 
     <script>
+        // --- 1. 語音系統初始化 ---
         const synth = window.speechSynthesis;
-        let curQStart = 0, curQEnd = 50;
         let samVoice = null;
 
-        // 核心：用最嚴格與最寬鬆的雙重過濾
         function getSamantha() {
             const voices = synth.getVoices();
-            if (voices.length === 0) return null;
-
-            // 1. 優先找高品質版本 (Enhanced)
-            let v = voices.find(v => v.name.includes('Samantha') && v.name.includes('Enhanced'));
-            // 2. 找一般版本
-            if (!v) v = voices.find(v => v.name.includes('Samantha'));
-            // 3. 找 iOS 內部 ID 匹配
-            if (!v) v = voices.find(v => v.voiceURI.includes('Samantha'));
-            
-            return v;
+            // 優先順序：Enhanced Samantha > Samantha > 包含 Samantha 的 URI
+            return voices.find(v => v.name.includes('Samantha') && v.name.includes('Enhanced')) ||
+                   voices.find(v => v.name.includes('Samantha')) ||
+                   voices.find(v => v.voiceURI.includes('Samantha'));
         }
 
-        // 初始化與監聽
-        function init() {
+        function initVoices() {
             samVoice = getSamantha();
-            if (samVoice) {
-                console.log("成功鎖定 Samantha: " + samVoice.name);
-            }
+            if (samVoice) console.log("成功鎖定 Samantha: " + samVoice.name);
         }
 
-        // 這是解決 iOS 非同步問題的絕招
+        // 監聽語音清單載入 (針對 Chrome/iOS)
         if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = init;
+            speechSynthesis.onvoiceschanged = initVoices;
         }
 
         function speak(text) {
             if (synth.speaking) synth.cancel();
-
-            // 如果點擊時還沒抓到，再抓一次
-            if (!samVoice) init();
+            if (!samVoice) initVoices();
 
             const utter = new SpeechSynthesisUtterance(text);
-            
             if (samVoice) {
                 utter.voice = samVoice;
             } else {
-                // 強制指定語言，防止變更成中文或其他奇怪聲音
                 utter.lang = 'en-US'; 
             }
-
             utter.pitch = 1.0;
             utter.rate = 0.9;
-            
-            // iOS 必加：確保音量
             utter.volume = 1.0;
-
             synth.speak(utter);
         }
 
-        // ---------------------------------------------------------
-        // 以下是您原本的頁面渲染邏輯 (保持不變)
-        // ---------------------------------------------------------
-
-        function createRangeButtons(containerId, callback) {
-            const container = document.getElementById(containerId);
-            if(!container) return;
-            container.innerHTML = '';
-            for (let i = 0; i < wordData.length; i += 50) {
-                let start = i, end = Math.min(i + 50, wordData.length);
-                let btn = document.createElement('button');
-                btn.className = 'range-btn';
-                btn.innerText = `${start + 1}-${end}`;
-                btn.onclick = (e) => {
-                    document.querySelectorAll(`#${containerId} .range-btn`).forEach(b => b.classList.remove('active'));
-                    e.target.classList.add('active');
-                    callback(start, end);
-                };
-                if (i === 0) btn.classList.add('active');
-                container.appendChild(btn);
-            }
-        }
-
-        function renderWordList(start, end) {
-            const display = document.getElementById('wordDisplay');
-            display.innerHTML = '';
-            wordData.slice(start, end).forEach((item, idx) => {
-                let div = document.createElement('div');
-                div.className = 'word-item';
-                div.innerHTML = `
-                    <div class="word-text">
-                        <strong>${start + idx + 1}. ${item.english}</strong>
-                        <span class="word-chinese">${item.chinese}</span>
-                    </div>
-                    <button class="audio-btn" onclick="speak('${item.english.replace(/'/g, "\\'")}')">🔊</button>
-                `;
-                display.appendChild(div);
-            });
-        }
-
-        function renderQuiz(type, start, end) {
-            const containerId = type === 'word' ? 'wordQuizContent' : 'listenQuizContent';
-            const nextBtnId = type === 'word' ? 'nextWordQuiz' : 'nextListenQuiz';
-            const submitBtnId = type === 'word' ? 'submitWordQuiz' : 'submitListenQuiz';
-            document.getElementById(nextBtnId).style.display = 'none';
-            document.getElementById(submitBtnId).style.display = 'block';
-            
-            const container = document.getElementById(containerId);
-            container.innerHTML = '';
-            let pool = wordData.slice(start, end);
-            let questions = [...pool].sort(() => 0.5 - Math.random()).slice(0, 5);
-            
-            questions.forEach((q, i) => {
-                let options = [q.chinese];
-                while(options.length < 4) {
-                    let r = wordData[Math.floor(Math.random()*wordData.length)].chinese;
-                    if(!options.includes(r)) options.push(r);
-                }
-                options.sort(() => 0.5 - Math.random());
-                
-                let qDiv = document.createElement('div');
-                qDiv.className = 'question-block';
-                qDiv.dataset.correct = q.chinese;
-                
-                let qTitle = document.createElement('div');
-                qTitle.className = 'question-text';
-                if(type === 'word') {
-                    qTitle.innerText = `${i+1}. ${q.english}`;
-                } else {
-                    qTitle.innerHTML = `${i+1}. <button class="audio-btn" style="margin:0" onclick="speak('${q.english.replace(/'/g, "\\'")}')">🔊</button>`;
-                }
-                
-                qDiv.appendChild(qTitle);
-                options.forEach(opt => {
-                    let btn = document.createElement('button');
-                    btn.className = 'option-button';
-                    btn.innerText = opt;
-                    btn.onclick = () => {
-                        qDiv.querySelectorAll('.option-button').forEach(b => b.classList.remove('selected'));
-                        btn.classList.add('selected');
-                    };
-                    qDiv.appendChild(btn);
-                });
-                container.appendChild(qDiv);
-            });
-        }
-
-        function setupQuizSubmit(btnId, nextBtnId, contentId) {
-            document.getElementById(btnId).onclick = () => {
-                let questions = document.querySelectorAll(`#${contentId} .question-block`);
-                questions.forEach(q => {
-                    let correct = q.dataset.correct;
-                    let selected = q.querySelector('.option-button.selected');
-                    q.querySelectorAll('.option-button').forEach(b => {
-                        if(b.innerText === correct) b.classList.add('correct');
-                        else if(b.classList.contains('selected')) b.classList.add('wrong');
-                    });
-                });
-                document.getElementById(btnId).style.display = 'none';
-                document.getElementById(nextBtnId).style.display = 'block';
-            };
-        }
-
-        function showPage(pageId, event) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.getElementById(pageId).classList.add('active');
-            document.querySelectorAll('.navbar-item').forEach(i => i.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            if (synth.speaking) synth.cancel();
-        }
-
-        window.onload = () => {
-            init(); // 頁面載入先跑一次
-            createRangeButtons('wordRangeSelector', renderWordList);
-            createRangeButtons('quizRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('word',s,e); });
-            createRangeButtons('listenRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('listen',s,e); });
-            renderWordList(0, 50);
-            renderQuiz('word', 0, 50);
-            renderQuiz('listen', 0, 50);
-            setupQuizSubmit('submitWordQuiz', 'nextWordQuiz', 'wordQuizContent');
-            setupQuizSubmit('submitListenQuiz', 'nextListenQuiz', 'listenQuizContent');
-            document.getElementById('nextWordQuiz').onclick = () => renderQuiz('word', curQStart, curQEnd);
-            document.getElementById('nextListenQuiz').onclick = () => renderQuiz('listen', curQStart, curQEnd);
-        };
-
-        // 僅使用您 Excel 檔案提供的內容
+        // --- 2. 資料集 ---
         const wordData = [
             {english: "abide by the terms", chinese: "遵守條款"},
             {english: "The applicant must meet all the requirements to be considered for the job opening.", chinese: "申請人必須滿足所有要求，才能被考慮錄取這個職位空缺。"},
@@ -359,7 +216,7 @@
             {english: "Some musicians are performing for the crowd.", chinese: "幾個音樂家在為群眾演出"},
             {english: "A man is paying a cashier.", chinese: "男子正在付錢給收銀員"},
             {english: "Dishes are being washed in a sink.", chinese: "盤子正在水槽中被人洗"},
-            {english: "Sign below to indicate your acceptance of these terms.", chinese: "在下面簽名已表明您接受這些條款"},
+            {english: "Sign below to indicate your acceptance of these terms.", chinese: "在下面簽名已表明您接受這些條條款"},
             {english: "Employees will be seated in the third row of the auditorium.", chinese: "員工將坐在禮堂的第三排"},
             {english: "You will need to get an identification badge to enter this building.", chinese: "您需要獲得身分識別卡才能進入該建築"},
             {english: "Until the telephone system is repaired, callers may experience delays of ten minutes or longer.", chinese: "在電話系統修復之前，來電者可能會遇到十分鐘或更長時間的延遲。"},
@@ -691,23 +548,12 @@
             {english: "He's already been added", chinese: "他已被添加"}
         ];
 
-        // --- 核心邏輯保持不變 ---
-        function loadVoices() {
-            let voices = synth.getVoices();
-            if (voices.length === 0) {
-                synth.onvoiceschanged = () => loadVoices();
-            }
-        }
-
-        function speak(text) {
-            if (synth.speaking) synth.cancel();
-            const utter = new SpeechSynthesisUtterance(text);
-            utter.lang = 'en-US';
-            synth.speak(utter);
-        }
+        // --- 3. 頁面功能邏輯 ---
+        let curQStart = 0, curQEnd = 50;
 
         function createRangeButtons(containerId, callback) {
             const container = document.getElementById(containerId);
+            if(!container) return;
             container.innerHTML = '';
             for (let i = 0; i < wordData.length; i += 50) {
                 let start = i, end = Math.min(i + 50, wordData.length);
@@ -793,7 +639,6 @@
                 let questions = document.querySelectorAll(`#${contentId} .question-block`);
                 questions.forEach(q => {
                     let correct = q.dataset.correct;
-                    let selected = q.querySelector('.option-button.selected');
                     q.querySelectorAll('.option-button').forEach(b => {
                         if(b.innerText === correct) b.classList.add('correct');
                         else if(b.classList.contains('selected')) b.classList.add('wrong');
@@ -812,16 +657,20 @@
             if (synth.speaking) synth.cancel();
         }
 
+        // --- 4. 啟動 ---
         window.onload = () => {
-            loadVoices();
+            initVoices();
             createRangeButtons('wordRangeSelector', renderWordList);
             createRangeButtons('quizRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('word',s,e); });
             createRangeButtons('listenRangeSelector', (s,e) => { curQStart=s; curQEnd=e; renderQuiz('listen',s,e); });
+            
             renderWordList(0, 50);
             renderQuiz('word', 0, 50);
             renderQuiz('listen', 0, 50);
+            
             setupQuizSubmit('submitWordQuiz', 'nextWordQuiz', 'wordQuizContent');
             setupQuizSubmit('submitListenQuiz', 'nextListenQuiz', 'listenQuizContent');
+            
             document.getElementById('nextWordQuiz').onclick = () => renderQuiz('word', curQStart, curQEnd);
             document.getElementById('nextListenQuiz').onclick = () => renderQuiz('listen', curQStart, curQEnd);
         };
